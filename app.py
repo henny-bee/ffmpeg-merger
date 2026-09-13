@@ -21,12 +21,13 @@ class MergeRequest(BaseModel):
 
 class JoinTextRequest(BaseModel):
     image_url: str
-    text: str                         # Bisa pakai \n untuk baris baru
+    text: str
+    max_chars_per_line: Optional[int] = 30  # Otomatis turun baris jika lebih dari jumlah karakter ini
     font_size: Optional[int] = 42
     font_color: Optional[str] = "white"
     border_color: Optional[str] = "black"
-    border_width: Optional[int] = 5   # Ketebalan stroke/outline
-    y_position: Optional[str] = "(h-text_h)/3"  # Default agak ke atas tengah, bisa juga angka misal "150"
+    border_width: Optional[int] = 5
+    y_position: Optional[str] = "h*0.22"    # Posisi atas agak ke bawah
 
 # ----------------- HELPERS -----------------
 
@@ -170,7 +171,7 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
 
 @app.post("/jointext")
 async def join_text(data: JoinTextRequest, background_tasks: BackgroundTasks):
-    """Menambahkan teks outline meme rata tengah ke gambar"""
+    """Menambahkan teks outline meme rata tengah ke gambar dengan auto-wrap"""
     task_id = str(uuid.uuid4())
     work_dir = f"/tmp/{task_id}"
     os.makedirs(work_dir, exist_ok=True)
@@ -188,14 +189,24 @@ async def join_text(data: JoinTextRequest, background_tasks: BackgroundTasks):
             with open(input_img_path, "wb") as f:
                 f.write(resp.content)
 
-        # 2. Simpan teks ke file (agar aman dari karakter aneh, koma, kutip, & enter)
-        with open(text_file_path, "w", encoding="utf-8") as f:
-            f.write(data.text)
+        # 2. AUTO-WRAP: Bungkus teks per baris agar otomatis turun ke bawah jika kepanjangan
+        lines = data.text.split("\n")
+        wrapped_lines = []
+        for line in lines:
+            if line.strip():
+                # textwrap.wrap akan memotong per spasi kata dengan rapi
+                wrapped = textwrap.wrap(line, width=data.max_chars_per_line)
+                wrapped_lines.extend(wrapped)
+            else:
+                wrapped_lines.append("")  # Menjaga spasi baris kosong jika ada enter manual
 
-        # 3. Rakit Filter FFmpeg drawtext
-        # - textfile: membaca dari text.txt
-        # - x=(w-text_w)/2: selalu rata tengah horizontal
-        # - borderw & bordercolor: membuat outline tebal khas meme
+        final_text = "\n".join(wrapped_lines)
+
+        # 3. Simpan teks yang sudah rapi ke text.txt
+        with open(text_file_path, "w", encoding="utf-8") as f:
+            f.write(final_text)
+
+        # 4. Rakit Filter FFmpeg drawtext
         drawtext_filter = (
             f"drawtext=textfile='{text_file_path}':"
             f"fontsize={data.font_size}:"
