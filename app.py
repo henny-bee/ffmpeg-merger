@@ -10,12 +10,25 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# ----------------- MODELS -----------------
+
 class MergeRequest(BaseModel):
     video_url_1: str
     video_url_2: str
-    music_url: Optional[str] = None  # Link URL file MP3 musik
-    music_volume: float = 1.0        # Default 100% (1.0)
-    video_volume: float = 1.0        # Default 100% (1.0)
+    music_url: Optional[str] = None   # Link URL file MP3 musik
+    music_volume: float = 1.0         # Default 100% (1.0)
+    video_volume: float = 1.0         # Default 100% (1.0)
+
+class JoinTextRequest(BaseModel):
+    image_url: str
+    text: str                         # Bisa pakai \n untuk baris baru
+    font_size: Optional[int] = 42
+    font_color: Optional[str] = "white"
+    border_color: Optional[str] = "black"
+    border_width: Optional[int] = 5   # Ketebalan stroke/outline
+    y_position: Optional[str] = "(h-text_h)/3"  # Default agak ke atas tengah, bisa juga angka misal "150"
+
+# ----------------- HELPERS -----------------
 
 def check_has_audio(file_path: str) -> bool:
     """Cek apakah file memiliki stream audio"""
@@ -53,6 +66,8 @@ def get_video_duration(file_path: str) -> float:
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     return float(res.stdout.strip())
+
+# ----------------- ENDPOINTS -----------------
 
 @app.get("/")
 def home():
@@ -102,7 +117,7 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
         v0_filter = f"[0:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur1},setpts=PTS-STARTPTS[v0];"
         v1_filter = f"[1:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur2},setpts=PTS-STARTPTS[v1];"
 
-        # 4. Filter Suara Video (Fallback hening jika video tanpa suara)
+        # 4. Filter Suara Video
         if has_a1:
             a0_filter = f"[0:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur1},asetpts=PTS-STARTPTS[a0];"
         else:
@@ -113,13 +128,11 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
         else:
             a1_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur2},asetpts=PTS-STARTPTS[a1];"
 
-        # 5. Gabungkan Audio & Musik (Masing-masing 100%)
+        # 5. Gabungkan Audio & Musik
         cmd_merge = ["ffmpeg", "-y", "-i", v1_path, "-i", v2_path]
 
         if has_music:
             cmd_merge.extend(["-stream_loop", "-1", "-i", music_path])
-            
-            # normalize=0 memastikan FFmpeg TIDAK membagi volume (tetap 100% full)
             concat_filter = (
                 "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][aconcat];"
                 f"[aconcat]volume={data.video_volume}[vo];"
@@ -143,13 +156,70 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
             out_path
         ])
 
-        # 6. Jalankan Proses Render FFmpeg
+        # 6. Jalankan FFmpeg
         res = subprocess.run(cmd_merge, capture_output=True, text=True)
         if res.returncode != 0:
             raise HTTPException(status_code=500, detail=f"FFmpeg render error: {res.stderr}")
 
         background_tasks.add_task(shutil.rmtree, work_dir, ignore_errors=True)
         return FileResponse(out_path, media_type="video/mp4", filename="merged.mp4")
+
+    except Exception as e:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/jointext")
+async def join_text(data: JoinTextRequest, background_tasks: BackgroundTasks):
+    """Menambahkan teks outline meme rata tengah ke gambar"""
+    task_id = str(uuid.uuid4())
+    work_dir = f"/tmp/{task_id}"
+    os.makedirs(work_dir, exist_ok=True)
+
+    input_img_path = os.path.join(work_dir, "input.jpg")
+    output_img_path = os.path.join(work_dir, "output.jpg")
+    text_file_path = os.path.join(work_dir, "text.txt")
+
+    try:
+        # 1. Unduh Gambar
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            resp = await client.get(data.image_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Gagal mengunduh gambar")
+            with open(input_img_path, "wb") as f:
+                f.write(resp.content)
+
+        # 2. Simpan teks ke file (agar aman dari karakter aneh, koma, kutip, & enter)
+        with open(text_file_path, "w", encoding="utf-8") as f:
+            f.write(data.text)
+
+        # 3. Rakit Filter FFmpeg drawtext
+        # - textfile: membaca dari text.txt
+        # - x=(w-text_w)/2: selalu rata tengah horizontal
+        # - borderw & bordercolor: membuat outline tebal khas meme
+        drawtext_filter = (
+            f"drawtext=textfile='{text_file_path}':"
+            f"fontsize={data.font_size}:"
+            f"fontcolor={data.font_color}:"
+            f"borderw={data.border_width}:"
+            f"bordercolor={data.border_color}:"
+            f"line_spacing=12:"
+            f"x=(w-text_w)/2:"
+            f"y={data.y_position}"
+        )
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_img_path,
+            "-vf", drawtext_filter,
+            output_img_path
+        ]
+
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"FFmpeg text error: {res.stderr}")
+
+        background_tasks.add_task(shutil.rmtree, work_dir, ignore_errors=True)
+        return FileResponse(output_img_path, media_type="image/jpeg", filename="captioned.jpg")
 
     except Exception as e:
         shutil.rmtree(work_dir, ignore_errors=True)
