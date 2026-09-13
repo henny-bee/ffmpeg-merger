@@ -15,10 +15,10 @@ app = FastAPI()
 
 class MergeRequest(BaseModel):
     video_url_1: str
-    video_url_2: str
-    music_url: Optional[str] = None   # Link URL file MP3 musik
-    music_volume: float = 1.0         # Default 100% (1.0)
-    video_volume: float = 1.0         # Default 100% (1.0)
+    video_url_2: Optional[str] = None   # Sekarang OPSIONAL (Bisa 1 video saja)
+    music_url: Optional[str] = None     # Link URL file MP3 musik (opsional)
+    music_volume: float = 1.0           # Default 100% (1.0)
+    video_volume: float = 1.0           # Default 100% (1.0)
 
 class JoinTextRequest(BaseModel):
     image_url: str
@@ -33,8 +33,8 @@ class JoinTextRequest(BaseModel):
 class ImageToVideoRequest(BaseModel):
     image_url: str
     duration: float = 9.0             
-    fps: int = 30                     #  rate standar video vertikal
-    width: int = 1080                 #  HD 9:16 (Full HD)
+    fps: int = 30                     # Frame rate standar video vertikal
+    width: int = 1080                 # HD 9:16 (Full HD)
     height: int = 1920                # HD 9:16 (Full HD)    
 
 # ----------------- HELPERS -----------------
@@ -93,22 +93,28 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
     music_path = os.path.join(work_dir, "music.mp3")
     out_path = os.path.join(work_dir, "merged.mp4")
 
+    has_v2 = bool(data.video_url_2)
+    has_music = bool(data.music_url)
+
     try:
-        # 1. Unduh Video 1, Video 2, dan MP3 Musik dari link
+        # 1. Unduh File
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            # Unduh Video 1
             r1 = await client.get(data.video_url_1)
             if r1.status_code != 200:
                 raise HTTPException(status_code=400, detail="Gagal mengunduh video 1")
             with open(v1_path, "wb") as f:
                 f.write(r1.content)
 
-            r2 = await client.get(data.video_url_2)
-            if r2.status_code != 200:
-                raise HTTPException(status_code=400, detail="Gagal mengunduh video 2")
-            with open(v2_path, "wb") as f:
-                f.write(r2.content)
+            # Unduh Video 2 (jika disediakan)
+            if has_v2:
+                r2 = await client.get(data.video_url_2)
+                if r2.status_code != 200:
+                    raise HTTPException(status_code=400, detail="Gagal mengunduh video 2")
+                with open(v2_path, "wb") as f:
+                    f.write(r2.content)
 
-            has_music = bool(data.music_url)
+            # Unduh Musik (jika disediakan)
             if has_music:
                 rm = await client.get(data.music_url)
                 if rm.status_code != 200:
@@ -116,46 +122,61 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
                 with open(music_path, "wb") as f:
                     f.write(rm.content)
 
-        # 2. Cek Durasi & Track Audio
+        # 2. Cek Durasi & Audio Video 1
         dur1 = get_video_duration(v1_path)
-        dur2 = get_video_duration(v2_path)
         has_a1 = check_has_audio(v1_path)
-        has_a2 = check_has_audio(v2_path)
 
-        # 3. Filter Format Video (9:16 / 720x1280 30fps)
-        v0_filter = f"[0:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur1},setpts=PTS-STARTPTS[v0];"
-        v1_filter = f"[1:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur2},setpts=PTS-STARTPTS[v1];"
+        cmd_merge = ["ffmpeg", "-y", "-i", v1_path]
+        music_input_index = 1
 
-        # 4. Filter Suara Video
-        if has_a1:
-            a0_filter = f"[0:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur1},asetpts=PTS-STARTPTS[a0];"
+        # 3. Rakit Filter Video & Audio Dasar
+        if has_v2:
+            cmd_merge.extend(["-i", v2_path])
+            music_input_index = 2
+
+            dur2 = get_video_duration(v2_path)
+            has_a2 = check_has_audio(v2_path)
+
+            v0_filter = f"[0:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur1},setpts=PTS-STARTPTS[v0];"
+            v1_filter = f"[1:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur2},setpts=PTS-STARTPTS[v1];"
+
+            if has_a1:
+                a0_filter = f"[0:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur1},asetpts=PTS-STARTPTS[a0];"
+            else:
+                a0_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur1},asetpts=PTS-STARTPTS[a0];"
+
+            if has_a2:
+                a1_filter = f"[1:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur2},asetpts=PTS-STARTPTS[a1];"
+            else:
+                a1_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur2},asetpts=PTS-STARTPTS[a1];"
+
+            base_filters = v0_filter + v1_filter + a0_filter + a1_filter + "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v_base][a_base];"
         else:
-            a0_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur1},asetpts=PTS-STARTPTS[a0];"
+            # Mode 1 Video Saja
+            v0_filter = f"[0:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,trim=0:{dur1},setpts=PTS-STARTPTS[v_base];"
+            if has_a1:
+                a0_filter = f"[0:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur1},asetpts=PTS-STARTPTS[a_base];"
+            else:
+                a0_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur1},asetpts=PTS-STARTPTS[a_base];"
 
-        if has_a2:
-            a1_filter = f"[1:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{dur2},asetpts=PTS-STARTPTS[a1];"
-        else:
-            a1_filter = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{dur2},asetpts=PTS-STARTPTS[a1];"
+            base_filters = v0_filter + a0_filter
 
-        # 5. Gabungkan Audio & Musik
-        cmd_merge = ["ffmpeg", "-y", "-i", v1_path, "-i", v2_path]
-
+        # 4. Filter Gabung Audio & Musik
         if has_music:
             cmd_merge.extend(["-stream_loop", "-1", "-i", music_path])
-            concat_filter = (
-                "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][aconcat];"
-                f"[aconcat]volume={data.video_volume}[vo];"
-                f"[2:a]aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo,volume={data.music_volume}[bgm];"
+            audio_filter = (
+                f"[a_base]volume={data.video_volume}[vo];"
+                f"[{music_input_index}:a]aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo,volume={data.music_volume}[bgm];"
                 "[vo][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
             )
         else:
-            concat_filter = "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"
+            audio_filter = f"[a_base]volume={data.video_volume}[a]"
 
-        full_filter = v0_filter + v1_filter + a0_filter + a1_filter + concat_filter
+        full_filter = base_filters + audio_filter
 
         cmd_merge.extend([
             "-filter_complex", full_filter,
-            "-map", "[v]",
+            "-map", "[v_base]",
             "-map", "[a]",
             "-c:v", "libx264",
             "-preset", "ultrafast",
@@ -165,7 +186,7 @@ async def merge_videos(data: MergeRequest, background_tasks: BackgroundTasks):
             out_path
         ])
 
-        # 6. Jalankan FFmpeg
+        # 5. Jalankan FFmpeg
         res = subprocess.run(cmd_merge, capture_output=True, text=True)
         if res.returncode != 0:
             raise HTTPException(status_code=500, detail=f"FFmpeg render error: {res.stderr}")
@@ -197,24 +218,23 @@ async def join_text(data: JoinTextRequest, background_tasks: BackgroundTasks):
             with open(input_img_path, "wb") as f:
                 f.write(resp.content)
 
-        # 2. AUTO-WRAP: Bungkus teks per baris agar otomatis turun ke bawah jika kepanjangan
+        # 2. AUTO-WRAP Teks
         lines = data.text.split("\n")
         wrapped_lines = []
         for line in lines:
             if line.strip():
-                # textwrap.wrap akan memotong per spasi kata dengan rapi
                 wrapped = textwrap.wrap(line, width=data.max_chars_per_line)
                 wrapped_lines.extend(wrapped)
             else:
-                wrapped_lines.append("")  # Menjaga spasi baris kosong jika ada enter manual
+                wrapped_lines.append("")
 
         final_text = "\n".join(wrapped_lines)
 
-        # 3. Simpan teks yang sudah rapi ke text.txt
+        # 3. Simpan teks ke file
         with open(text_file_path, "w", encoding="utf-8") as f:
             f.write(final_text)
 
-        # 4. Rakit Filter FFmpeg drawtext
+        # 4. Filter FFmpeg drawtext
         drawtext_filter = (
             f"drawtext=textfile='{text_file_path}':"
             f"fontsize={data.font_size}:"
@@ -264,7 +284,6 @@ async def image_to_video(data: ImageToVideoRequest, background_tasks: Background
                 f.write(resp.content)
 
         # 2. Filter Skala Video ke HD 9:16 (1080x1920)
-        # force_original_aspect_ratio=decrease & pad menjaga proporsi gambar agar tidak gepeng
         vf_filter = (
             f"fps={data.fps},"
             f"scale={data.width}:{data.height}:force_original_aspect_ratio=decrease,"
@@ -272,7 +291,7 @@ async def image_to_video(data: ImageToVideoRequest, background_tasks: Background
             f"setsar=1,format=yuv420p"
         )
 
-        # 3. Render FFmpeg (CRF 20 untuk kualitas HD tajam)
+        # 3. Render FFmpeg
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
