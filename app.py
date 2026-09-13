@@ -3,6 +3,7 @@ import uuid
 import shutil
 import subprocess
 from typing import Optional
+import textwrap
 import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
