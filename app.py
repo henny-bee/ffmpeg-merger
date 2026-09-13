@@ -266,7 +266,6 @@ async def join_text(data: JoinTextRequest, background_tasks: BackgroundTasks):
 
 @app.post("/image-to-video")
 async def image_to_video(data: ImageToVideoRequest, background_tasks: BackgroundTasks):
-    """Mengubah gambar statis menjadi video MP4 Full HD 9:16 (1080x1920)"""
     task_id = str(uuid.uuid4())
     work_dir = f"/tmp/{task_id}"
     os.makedirs(work_dir, exist_ok=True)
@@ -275,23 +274,25 @@ async def image_to_video(data: ImageToVideoRequest, background_tasks: Background
     output_mp4_path = os.path.join(work_dir, "output.mp4")
 
     try:
-        # 1. Unduh Gambar
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True, headers=headers) as client:
             resp = await client.get(data.image_url)
             if resp.status_code != 200:
                 raise HTTPException(status_code=400, detail="Gagal mengunduh gambar")
             with open(input_img_path, "wb") as f:
                 f.write(resp.content)
 
-        # 2. Filter Skala Video ke HD 9:16 (1080x1920)
         vf_filter = (
-            f"fps={data.fps},"
             f"scale={data.width}:{data.height}:force_original_aspect_ratio=decrease,"
             f"pad={data.width}:{data.height}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,format=yuv420p"
+            f"setsar=1,"
+            f"fps={data.fps},"
+            f"format=yuv420p"
         )
 
-        # 3. Render FFmpeg
+
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
@@ -302,10 +303,12 @@ async def image_to_video(data: ImageToVideoRequest, background_tasks: Background
             "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-vf", vf_filter,
             "-c:v", "libx264",
-            "-preset", "veryfast",
+            "-tune", "stillimage",
+            "-preset", "ultrafast",
             "-crf", "20",
+            "-threads", "2",
             "-c:a", "aac",
-            "-b:a", "192k",
+            "-b:a", "128k",
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             output_mp4_path
