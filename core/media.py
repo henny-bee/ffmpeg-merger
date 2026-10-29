@@ -11,19 +11,9 @@ from PIL import Image, ImageFont
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REAL_ESRGAN_ONNX = os.path.join(_BASE_DIR, "models", "realesr-animevideov3.onnx")
-_WIN_FFMPEG_DIR = r"C:\Users\TiarNurAzhar\AppData\Local\hermes\tools\ffmpeg-9.0.1-win32-x64\bin"
 
-FFMPEG_BIN = shutil.which("ffmpeg") or (
-    os.path.join(_WIN_FFMPEG_DIR, "ffmpeg.exe")
-    if os.path.exists(os.path.join(_WIN_FFMPEG_DIR, "ffmpeg.exe"))
-    else "ffmpeg"
-)
-
-FFPROBE_BIN = shutil.which("ffprobe") or (
-    os.path.join(_WIN_FFMPEG_DIR, "ffprobe.exe")
-    if os.path.exists(os.path.join(_WIN_FFMPEG_DIR, "ffprobe.exe"))
-    else "ffprobe"
-)
+FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
+FFPROBE_BIN = os.getenv("FFPROBE_BIN", "ffprobe")
 
 
 def create_work_dir() -> str:
