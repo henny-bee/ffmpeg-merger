@@ -37,4 +37,5 @@ class ThumbnailRequest(BaseModel):
     source: Optional[str] = None
     timestamp: float = 0.0
     font_size: int = 49
+    upscale: bool = True
     output_format: str = "jpg"

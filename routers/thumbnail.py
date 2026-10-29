@@ -6,7 +6,7 @@ import httpx
 from PIL import Image, ImageDraw, ImageFilter
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
-from core.media import FFMPEG_BIN, create_work_dir, load_font
+from core.media import FFMPEG_BIN, create_work_dir, load_font, upscale_to_720p
 from schemas.requests import ThumbnailRequest
 
 router = APIRouter()
@@ -59,14 +59,16 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
                 else:
                     nh = int(iw / target_r)
                     img = img.crop((0, (ih - nh) // 2, iw, (ih + nh) // 2))
-            if img.size != (1280, 720):
+            if data.upscale:
+                img = upscale_to_720p(img)
+            elif img.size != (1280, 720):
                 img = img.resize((1280, 720), Image.Resampling.LANCZOS)
         except Exception:
             cmd = [
                 FFMPEG_BIN, "-y",
                 "-ss", str(data.timestamp),
                 "-i", input_path,
-                "-vf", "crop=min(iw\\,ih*16/9):min(ih\\,iw*9/16),scale=1280:720:flags=lanczos,unsharp=3:3:0.6:3:3:0.0",
+                "-vf", "crop=min(iw\\,ih*16/9):min(ih\\,iw*9/16)",
                 "-frames:v", "1",
                 "-update", "1",
                 frame_path
@@ -74,7 +76,12 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode != 0 or not os.path.exists(frame_path):
                 raise HTTPException(status_code=500, detail=f"FFmpeg crop error: {res.stderr}")
-            img = Image.open(frame_path).convert("RGBA")
+            with Image.open(frame_path) as raw_frame:
+                frame_im = raw_frame.copy()
+            if data.upscale:
+                img = upscale_to_720p(frame_im)
+            else:
+                img = frame_im.resize((1280, 720), Image.Resampling.LANCZOS).convert("RGBA")
 
         w, h = img.size
 
