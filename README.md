@@ -12,6 +12,7 @@ file directly in the response.
 - **`/merge`** — concatenate two videos (or process a single one), normalize to 720x1280, and mix in background music with independent volume control.
 - **`/jointext`** — burn meme-style text (outlined, centered, auto-wrapped) onto an image.
 - **`/image-to-video`** — turn a still image into a 1080x1920 HD video of any duration, with a silent audio track.
+- **`/thumbnail`** — extract the middle frame of a video, center-crop to 16:9 (`1280x720`), and render a news-style headline with blurred dark shadow, `*...*` red highlight boxes, and a bottom-right `Source:` badge.
 
 ## Stack
 
@@ -188,8 +189,17 @@ curl -X POST http://localhost:10000/image-to-video \
 
 ```
 .
-├── app.py             # All endpoints and FFmpeg helpers
-├── requirements.txt   # fastapi, uvicorn, httpx
-├── Dockerfile         # python:3.10-slim + ffmpeg
+├── app.py                     # FastAPI entrypoint (registers routers)
+├── core/
+│   └── media.py               # FFmpeg/FFprobe helpers, temp dir, font loader
+├── schemas/
+│   └── requests.py            # Pydantic request models
+├── routers/
+│   ├── merge.py               # POST /merge
+│   ├── jointext.py            # POST /jointext
+│   ├── image_to_video.py      # POST /image-to-video
+│   └── thumbnail.py           # POST /thumbnail
+├── requirements.txt           # fastapi, uvicorn, httpx, pillow
+├── Dockerfile                 # python:3.10-slim + ffmpeg + fonts
 └── README.md
 ```
