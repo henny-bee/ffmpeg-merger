@@ -88,9 +88,9 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
             r"C:\Windows\Fonts\seguisb.ttf",
             r"C:\Windows\Fonts\arial.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ], 22)
+        ], 25)
 
-        max_w = int(w * 0.85)
+        max_w = int(w * 0.94)
         space_w = font.getlength(" ")
         lines = []
         for raw_line in data.text.split("\n"):
@@ -115,19 +115,19 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
             if cur:
                 lines.append(cur)
 
-        line_h = int(data.font_size * 1.38)
+        line_h = int(data.font_size * 1.34)
         total_h = len(lines) * line_h
-        x_start = int(w * 0.072)
-        y_start = h - total_h - 56
+        x_start = 38
+        y_start = h - total_h - 18
 
         shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         sdraw = ImageDraw.Draw(shadow)
         sdraw.rounded_rectangle(
-            [x_start - 35, y_start - 25, w - x_start + 35, y_start + total_h + 25],
-            radius=30,
-            fill=(6, 23, 58, 235)
+            [16, y_start - 14, w - 16, h - 8],
+            radius=28,
+            fill=(10, 18, 32, 185)
         )
-        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=28))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=3))
         img = Image.alpha_composite(img, shadow)
 
         overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -147,9 +147,9 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
                         j += 1
                     seg_w = font.getlength(" ".join(seg_words))
                     odraw.rounded_rectangle(
-                        [x - 6, y + cap_top - 7, x + seg_w + 6, y + cap_bot + 9],
+                        [x - 7, y + cap_top - 6, x + seg_w + 7, y + cap_bot + 8],
                         radius=9,
-                        fill=(239, 43, 45, 255)
+                        fill=(220, 20, 20, 255)
                     )
                     x += seg_w + space_w
                     i = j
@@ -168,10 +168,33 @@ async def create_thumbnail(data: ThumbnailRequest, background_tasks: BackgroundT
                 clean_src = f"Source: {clean_src}"
             sbbox = src_font.getbbox(clean_src)
             sw, sh = sbbox[2] - sbbox[0], sbbox[3] - sbbox[1]
-            bx2, by2 = w - 18, h - 6
-            bx1, by1 = bx2 - sw - 22, by2 - sh - 16
-            odraw.rectangle([bx1, by1, bx2, by2], fill=(0, 0, 0, 215))
-            odraw.text((bx1 + 11, by1 + 6 - sbbox[1]), clean_src, font=src_font, fill=(255, 255, 255, 255))
+            bx2, by1 = w - 2, 2
+            bx1, by2 = bx2 - sw - 22, by1 + sh + 16
+            odraw.rounded_rectangle([bx1, by1, bx2, by2], radius=10, fill=(0, 0, 0, 215))
+            odraw.text((bx1 + 11, by1 + 7 - sbbox[1]), clean_src, font=src_font, fill=(255, 255, 255, 255))
+
+        if data.logo_url and data.logo_url.strip():
+            logo_input = data.logo_url.strip()
+            if logo_input.startswith(("http://", "https://")):
+                logo_path = os.path.join(work_dir, "logo_img")
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    lresp = await client.get(logo_input)
+                    if lresp.status_code != 200:
+                        raise HTTPException(status_code=400, detail="Gagal mengunduh logo")
+                    with open(logo_path, "wb") as f:
+                        f.write(lresp.content)
+            else:
+                if not os.path.exists(logo_input):
+                    raise HTTPException(status_code=400, detail=f"File logo tidak ditemukan: {logo_input}")
+                logo_path = logo_input
+
+            with Image.open(logo_path) as raw_logo:
+                logo_im = raw_logo.convert("RGBA").resize((120, 120), Image.Resampling.LANCZOS)
+            mask = Image.new("L", (120, 120), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, 120, 120], radius=18, fill=255)
+            r, g, b, a = logo_im.split()
+            logo_im.putalpha(Image.composite(a, Image.new("L", (120, 120), 0), mask))
+            overlay.paste(logo_im, (0, 0), logo_im)
 
         final_img = Image.alpha_composite(img, overlay)
         if ext == "png":

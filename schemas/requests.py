@@ -32,8 +32,9 @@ class ImageToVideoRequest(BaseModel):
 class ThumbnailRequest(BaseModel):
     video_url: Optional[str] = None
     image_url: Optional[str] = None
+    logo_url: Optional[str] = None
     text: str
     source: Optional[str] = None
     timestamp: float = 0.0
-    font_size: int = 46
+    font_size: int = 49
     output_format: str = "jpg"
