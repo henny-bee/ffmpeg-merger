@@ -13,6 +13,7 @@ file directly in the response.
 - **`/jointext`** — burn meme-style text (outlined, centered, auto-wrapped) onto an image.
 - **`/image-to-video`** — turn a still image into a 1080x1920 HD video of any duration, with a silent audio track.
 - **`/thumbnail`** — extract the middle frame of a video, center-crop to 16:9 (`1280x720`), and render a news-style headline with blurred dark shadow, `*...*` red highlight boxes, and a bottom-right `Source:` badge.
+- **`/render`** — render a self-contained HTML + SVG string into a `1280x720` PNG/JPG image using headless Chromium.
 
 ## Stack
 

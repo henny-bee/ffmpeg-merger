@@ -39,3 +39,10 @@ class ThumbnailRequest(BaseModel):
     font_size: int = 49
     upscale: bool = True
     output_format: str = "jpg"
+
+
+class RenderHtmlRequest(BaseModel):
+    html: str
+    width: int = 1280
+    height: int = 720
+    output_format: str = "png"

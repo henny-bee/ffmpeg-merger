@@ -14,6 +14,7 @@ REAL_ESRGAN_ONNX = os.path.join(_BASE_DIR, "models", "realesr-animevideov3.onnx"
 
 FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.getenv("FFPROBE_BIN", "ffprobe")
+BROWSER_BIN = os.getenv("BROWSER_BIN", "chromium")
 
 
 def create_work_dir() -> str:
